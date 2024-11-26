@@ -315,19 +315,33 @@ def slits_wcs(input_model, reference_files, slit_y_range):
     return msa_pipeline
 
 
-def slitlets_wcs(input_model, reference_files, open_slits_id):
+def slitlets_wcs(input_model, reference_files, open_slits_id, set_sporder=None):
     """
     Create The WCS pipeline for MOS and Fixed slits for the
     specific opened shutters/slits. ``slit_y_range`` is taken from
     ``slit.ymin`` and ``slit.ymax``.
 
     Note: This function is also used by the ``msaflagopen`` step.
+
+    Parameters
+    ----------
+    input_model : `~jwst.datamodels.JwstDataModel`
+        The input data model.
+    reference_files : dict
+        The reference files used for this mode.
+    open_slits_id : list
+        List of open slit definitions
+    set_sporder : int, None
+        Explicit spectral order to use other than the default
     """
     # Get the corrected disperser model
     disperser = get_disperser(input_model, reference_files['disperser'])
 
     # Get the default spectral order and wavelength range and record them in the model.
     sporder, wrange = get_spectral_order_wrange(input_model, reference_files['wavelengthrange'])
+    if set_sporder is not None:
+        sporder = set_sporder
+
     input_model.meta.wcsinfo.waverange_start = wrange[0]
     input_model.meta.wcsinfo.waverange_end = wrange[1]
     log.info("SPORDER= {0}, wrange={1}".format(sporder, wrange))
@@ -399,7 +413,7 @@ def slitlets_wcs(input_model, reference_files, open_slits_id):
     return msa_pipeline
 
 
-def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55]):
+def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55], validate=False):
     """Return the opened slits/shutters in a MOS or Fixed Slits exposure.
     """
     exp_type = input_model.meta.exposure.type.lower()
@@ -432,7 +446,8 @@ def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55]):
         raise ValueError("EXP_TYPE {0} is not supported".format(exp_type.upper()))
 
     if reference_files is not None and slits:
-        slits = validate_open_slits(input_model, slits, reference_files)
+        if validate:
+            slits = validate_open_slits(input_model, slits, reference_files)
         log.info("Slits projected on detector {0}: {1}".format(input_model.meta.instrument.detector,
                                                                [sl.name for sl in slits]))
     if not slits:
@@ -1332,7 +1347,7 @@ def mask_slit(ymin=-.55, ymax=.55):
     return model
 
 
-def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=.55):
+def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=.55, valid_wavelengths=True):
     """
     Compute the bounding box of the projection of a slit/slice on the detector.
 
@@ -1349,7 +1364,8 @@ def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=
         `nrs_wcs_set_input` uses "detector to slit", validate_open_slits uses "slit to detector".
     wavelength_range : tuple
         The wavelength range for the combination of grating and filter.
-
+    valid_wavelengths : bool
+        Trim pixels with undefined wavelengths before calculating the bounding box
     """
 
     # If transform has inverse then it must be slit to detector
@@ -1392,7 +1408,10 @@ def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=
     if detector2slit is not None and check_range(*bbox[0]) and check_range(*bbox[1]):
         x, y = grid_from_bounding_box(bbox)
         _, _, lam = detector2slit(x, y)
-        y_range = y[np.isfinite(lam)]
+        if valid_wavelengths:
+            y_range = y[np.isfinite(lam)]
+        else:
+            y_range = y
 
         bbox = bbox_from_range(x_range, y_range)
 
