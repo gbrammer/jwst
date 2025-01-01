@@ -413,7 +413,7 @@ def slitlets_wcs(input_model, reference_files, open_slits_id, set_sporder=None):
     return msa_pipeline
 
 
-def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55], validate=False):
+def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55], validate=True, use_sporder=None):
     """Return the opened slits/shutters in a MOS or Fixed Slits exposure.
     """
     exp_type = input_model.meta.exposure.type.lower()
@@ -447,7 +447,7 @@ def get_open_slits(input_model, reference_files=None, slit_y_range=[-.55, .55], 
 
     if reference_files is not None and slits:
         if validate:
-            slits = validate_open_slits(input_model, slits, reference_files)
+            slits = validate_open_slits(input_model, slits, reference_files, use_sporder=use_sporder)
         log.info("Slits projected on detector {0}: {1}".format(input_model.meta.instrument.detector,
                                                                [sl.name for sl in slits]))
     if not slits:
@@ -1347,7 +1347,7 @@ def mask_slit(ymin=-.55, ymax=.55):
     return model
 
 
-def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=.55, valid_wavelengths=True):
+def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=.55):
     """
     Compute the bounding box of the projection of a slit/slice on the detector.
 
@@ -1364,8 +1364,6 @@ def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=
         `nrs_wcs_set_input` uses "detector to slit", validate_open_slits uses "slit to detector".
     wavelength_range : tuple
         The wavelength range for the combination of grating and filter.
-    valid_wavelengths : bool
-        Trim pixels with undefined wavelengths before calculating the bounding box
     """
 
     # If transform has inverse then it must be slit to detector
@@ -1408,10 +1406,7 @@ def compute_bounding_box(transform, wavelength_range, slit_ymin=-.55, slit_ymax=
     if detector2slit is not None and check_range(*bbox[0]) and check_range(*bbox[1]):
         x, y = grid_from_bounding_box(bbox)
         _, _, lam = detector2slit(x, y)
-        if valid_wavelengths:
-            y_range = y[np.isfinite(lam)]
-        else:
-            y_range = y
+        y_range = y[np.isfinite(lam)]
 
         bbox = bbox_from_range(x_range, y_range)
 
@@ -1923,7 +1918,7 @@ def nrs_wcs_set_input(input_model, slit_name, wavelength_range=None,
     return slit_wcs
 
 
-def validate_open_slits(input_model, open_slits, reference_files):
+def validate_open_slits(input_model, open_slits, reference_files, use_sporder=None, get_bounding_boxes=False):
     """
     Remove slits which do not project on the detector from the list of open slits.
     For each slit computes the transform from the slit to the detector and
@@ -1933,6 +1928,9 @@ def validate_open_slits(input_model, open_slits, reference_files):
     ----------
     input_model : jwst.datamodels.JwstDataModel
         Input data model
+
+    use_sporder : None, int
+        Force spectral order to use
 
     Returns
     -------
@@ -1960,6 +1958,9 @@ def validate_open_slits(input_model, open_slits, reference_files):
     order, wrange = get_spectral_order_wrange(input_model,
                                               reference_files['wavelengthrange'])
 
+    if use_sporder is not None:
+        order = use_sporder
+
     input_model.meta.wcsinfo.waverange_start = wrange[0]
     input_model.meta.wcsinfo.waverange_end = wrange[1]
     input_model.meta.wcsinfo.spectral_order = order
@@ -1977,6 +1978,8 @@ def validate_open_slits(input_model, open_slits, reference_files):
 
     slit2msa = slit_to_msa(open_slits, reference_files['msa'])
 
+    bounding_boxes = []
+
     for slit in slit2msa.slits:
         msa_transform = slit2msa.get_model(slit.name)
         msa2det = msa_transform & Identity(1) | col2det
@@ -1989,8 +1992,13 @@ def validate_open_slits(input_model, open_slits, reference_files):
                      "WCS bounding_box is completely outside the detector.".format(slit.name))
             idx = np.nonzero([s.name == slit.name for s in open_slits])[0][0]
             open_slits.pop(idx)
+        else:
+            bounding_boxes.append(bb)
 
-    return open_slits
+    if get_bounding_boxes:
+        return open_slits, bounding_boxes
+    else:
+        return open_slits
 
 
 def spectral_order_wrange_from_model(input_model):
